@@ -316,3 +316,103 @@ class ToolExecution(TimeStampedModel):
     
     def __str__(self):
         return f"{self.tool_name} - {'✓' if self.success else '✗'}"
+
+
+# RL Models
+
+class RLExperienceRecord(models.Model):
+    """
+    Stores every (state, action, reward, next_state, done) tuple
+    produced during a query.
+
+    Enables:
+        • Offline replay training
+        • Deferred user-feedback reward updates
+        • Analytics / performance monitoring
+    """
+
+    ACTION_CHOICES = [
+        ("RETRIEVE_MORE",      "Retrieve More"),
+        ("RE_RANK",            "Re-Rank"),
+        ("ANSWER_NOW",         "Answer Now"),
+        ("ASK_CLARIFICATION",  "Ask Clarification"),
+    ]
+
+    FEEDBACK_CHOICES = [
+        ("positive", "Positive"),
+        ("negative", "Negative"),
+        ("none",     "None"),
+    ]
+
+    id            = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Link back to the Query that generated this experience
+    query_id      = models.CharField(max_length=100, db_index=True)
+
+    # RL tuple
+    rl_state      = models.JSONField(help_text="[conf_bucket, retr_bucket, comp_bucket, has_internet]")
+    action_idx    = models.IntegerField()
+    action_name   = models.CharField(max_length=30, choices=ACTION_CHOICES, db_index=True)
+    reward        = models.FloatField()
+    next_rl_state = models.JSONField()
+    done          = models.BooleanField(default=False, db_index=True)
+
+    # Deferred feedback
+    user_feedback = models.CharField(
+        max_length=10, choices=FEEDBACK_CHOICES, default="none", db_index=True
+    )
+
+    created_at    = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes  = [
+            models.Index(fields=["query_id", "created_at"]),
+            models.Index(fields=["action_name", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.action_name} | reward={self.reward:+.3f} | done={self.done}"
+
+
+class RLEpisodeSummary(models.Model):
+    """
+    Aggregated per-query RL statistics.
+    One row per query — written by the coordinator after the full pipeline.
+
+    Useful for:
+        • Monitoring convergence (is ε decreasing? are rewards improving?)
+        • Identifying queries that required many steps
+        • A/B comparison before/after RL deployment
+    """
+
+    id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    query_id        = models.CharField(max_length=100, unique=True, db_index=True)
+
+    total_steps     = models.IntegerField(default=0)
+    total_reward    = models.FloatField(default=0.0)
+    final_confidence = models.FloatField(null=True, blank=True)
+    epsilon_at_end  = models.FloatField(null=True, blank=True)
+
+    # Which actions were taken (list of action names)
+    actions_taken   = models.JSONField(default=list)
+
+    # Was this query resolved from RAG only, or needed internet?
+    used_internet   = models.BooleanField(default=False)
+
+    # Did the user provide feedback?
+    user_feedback   = models.CharField(max_length=10, default="none")
+
+    created_at      = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes  = [
+            models.Index(fields=["-created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Episode {self.query_id[:8]}… | "
+            f"steps={self.total_steps} | reward={self.total_reward:+.3f}"
+        )

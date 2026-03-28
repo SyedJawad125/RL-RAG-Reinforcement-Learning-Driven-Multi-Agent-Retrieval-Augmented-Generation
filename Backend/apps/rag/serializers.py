@@ -6,6 +6,8 @@ from apps.rag.models import (
     Document,
     DocumentChunk,
     Query,
+    RLEpisodeSummary,
+    RLExperienceRecord,
     Session,
     AgentExecution,
     GraphEntity,
@@ -227,3 +229,64 @@ class SystemStatsSerializer(serializers.Serializer):
     strategy_distribution = serializers.DictField()
     source_distribution = serializers.DictField(required=False)
     agent_usage = serializers.DictField(required=False)
+
+
+
+
+from rest_framework import serializers
+# from apps.rag.models import RLExperienceRecord, RLEpisodeSummary  ← add to top
+
+
+# ============================================
+# RL Serializers
+# ============================================
+
+class RLExperienceRecordSerializer(serializers.ModelSerializer):
+    """Full serialiser for a single RL experience tuple."""
+
+    class Meta:
+        model  = RLExperienceRecord
+        fields = [
+            "id", "query_id",
+            "rl_state", "action_idx", "action_name",
+            "reward", "next_rl_state", "done",
+            "user_feedback", "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+
+class RLEpisodeSummarySerializer(serializers.ModelSerializer):
+    """Per-query episode summary."""
+
+    class Meta:
+        model  = RLEpisodeSummary
+        fields = [
+            "id", "query_id",
+            "total_steps", "total_reward", "final_confidence",
+            "epsilon_at_end", "actions_taken",
+            "used_internet", "user_feedback", "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+
+class RLStatsSerializer(serializers.Serializer):
+    """Live RL statistics returned by the /rl/stats/ endpoint."""
+    epsilon         = serializers.FloatField()
+    total_updates   = serializers.IntegerField()
+    states_learned  = serializers.IntegerField()
+    replay_buf_size = serializers.IntegerField()
+    actions         = serializers.ListField(child=serializers.CharField())
+    q_table_sample  = serializers.DictField()
+
+
+class UserFeedbackSerializer(serializers.Serializer):
+    """
+    Body for POST /api/rag/v1/rl/feedback/
+
+    {
+        "query_id": "...",
+        "feedback": "positive"   ← or "negative"
+    }
+    """
+    query_id = serializers.CharField(max_length=100)
+    feedback = serializers.ChoiceField(choices=["positive", "negative"])
