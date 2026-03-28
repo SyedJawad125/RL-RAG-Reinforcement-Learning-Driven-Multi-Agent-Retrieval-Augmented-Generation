@@ -1,0 +1,108 @@
+# django==5.2.5
+# djangorestframework==3.16.1
+# djangorestframework_simplejwt==5.5.0
+# django-cors-headers==4.7.0
+# django-filter==25.1.0
+# cryptography==45.0.6
+# python-dotenv==1.1.1
+# psycopg2-binary==2.9.10
+# pillow==11.3.0
+# celery==5.5.3
+# pika==1.3.2
+# django-celery-results==2.6.0
+# amqp==5.3.1
+# pytz==2025.2
+# django-redis==6.0.0
+# python-dateutil==2.9.0
+# drf-spectacular
+# drf-spectacular-sidecar
+# gunicorn==23.0.0
+# django-ckeditor-5==0.2.18
+
+
+
+
+# Django Multi-Agent RAG System - Requirements
+# ============================================
+
+# Django Core
+Django==5.0.1
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-filter==25.1.0
+django-environ==0.11.2
+psycopg2-binary==2.9.9
+python-dotenv==1.1.1
+
+# Authentication & Security
+djangorestframework_simplejwt==5.5.0
+cryptography==45.0.6
+
+# Multi-Agent & LLM Framework
+langgraph==0.0.40
+langchain==0.1.10
+langchain-community==0.0.24
+langchain-core==0.1.27
+
+# LLM Providers
+groq==0.4.2
+openai==1.12.0
+
+# Vector Store & Embeddings
+chromadb==0.4.22
+sentence-transformers==2.3.1
+faiss-cpu==1.7.4
+
+# Document Processing
+PyPDF2==3.0.1
+python-docx==1.1.0
+python-magic==0.4.27
+pillow==11.3.0
+django-ckeditor-5==0.2.18
+
+# Web Search Tools
+tavily-python==0.3.0
+duckduckgo-search==4.4.3
+
+# Graph Database
+neo4j==5.16.0
+networkx==3.2.1
+
+# Background Tasks & Message Queues
+celery==5.3.6
+redis==5.0.1
+pika==1.3.2
+django-celery-results==2.6.0
+amqp==5.3.1
+
+# Caching
+django-redis==6.0.0
+
+# Monitoring & Logging
+sentry-sdk==1.40.6
+prometheus-client==0.19.0
+
+# API & Utilities
+drf-spectacular
+drf-spectacular-sidecar
+pydantic==2.6.1
+pydantic-settings==2.1.0
+httpx==0.26.0
+tenacity==8.2.3
+
+# Data Processing
+numpy==1.26.3
+pandas==2.2.0
+python-dateutil==2.9.0
+pytz==2025.2
+
+# Development
+pytest==8.0.0
+pytest-django==4.7.0
+black==24.1.1
+flake8==7.0.0
+ipython==8.20.0
+
+# Production
+gunicorn==23.0.0
+whitenoise==6.6.0
