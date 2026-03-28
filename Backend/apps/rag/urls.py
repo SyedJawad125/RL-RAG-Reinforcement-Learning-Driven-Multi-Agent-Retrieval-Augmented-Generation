@@ -33,16 +33,16 @@ urlpatterns = [
     path('v1/agents/status/', views.agent_status, name='agent-status'),
 
     # POST  { "query_id": "...", "feedback": "positive"|"negative" }
-    path("rl/feedback/",             views.rl_feedback,     name="rl_feedback"),
+    path("v1/rl/feedback/",             views.rl_feedback,     name="rl_feedback"),
  
     # GET   live Q-table stats + DB aggregates
-    path("rl/stats/",                views.rl_stats,        name="rl_stats"),
+    path("v1/rl/stats/",                views.rl_stats,        name="rl_stats"),
  
     # GET   per-query decision trace
-    path("rl/trace/<str:query_id>/", views.rl_query_trace,  name="rl_query_trace"),
+    path("v1/rl/trace/<str:query_id>/", views.rl_query_trace,  name="rl_query_trace"),
  
     # POST  manual replay-training trigger  { "batch_size": 64 }
-    path("rl/train/",                views.rl_train,        name="rl_train"),
+    path("v1/rl/train/",                views.rl_train,        name="rl_train"),
 ]
 
 
