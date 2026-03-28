@@ -62,7 +62,6 @@ INSTALLED_APPS = [
     'django_celery_results',
 
     'corsheaders',
-    'apps.myapp',
     'apps.notification',
     'apps.images',
     'apps.rag',

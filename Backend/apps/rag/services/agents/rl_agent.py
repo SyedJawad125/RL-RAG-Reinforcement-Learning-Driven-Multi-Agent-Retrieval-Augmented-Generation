@@ -29,7 +29,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from .base_agent import BaseAgent, AgentResult, AgentState
-from services.agents.rl_memory import ACTIONS, ACTION_IDX, RLExperience, RLMemoryManager
+from apps.rag.services.agents.rl_memory import ACTIONS, ACTION_IDX, RLExperience, RLMemoryManager
 
 logger = logging.getLogger(__name__)
 

@@ -493,12 +493,12 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from services.agents.base_agent   import AgentState
-from services.agents.planner_agent import PlannerAgent
-from services.agents.rag_agent    import RAGAgent
-from services.agents.answer_agent import AnswerAgent
-from services.agents.search_agent import SearchAgent
-from services.agents.rl_agent     import RLDecisionAgent
+from apps.rag.services.agents.base_agent   import AgentState
+from apps.rag.services.agents.planner_agent import PlannerAgent
+from apps.rag.services.agents.rag_agent    import RAGAgent
+from apps.rag.services.agents.answer_agent import AnswerAgent
+from apps.rag.services.agents.search_agent import SearchAgent
+from apps.rag.services.agents.rl_agent     import RLDecisionAgent
 
 logger = logging.getLogger(__name__)
 
