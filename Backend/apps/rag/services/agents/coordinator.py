@@ -462,6 +462,371 @@
 
 
 
+# """
+# Multi-Agent Coordinator — RL-Enhanced
+# --------------------------------------
+# Orchestrates the full query pipeline:
+
+#     User Query
+#         │
+#         ▼
+#     PlannerAgent          ← classifies query, determines complexity
+#         │
+#         ▼
+#     RLDecisionAgent  ◄──── Q-learning policy (core)
+#         │
+#         ├── RETRIEVE_MORE     → RAGAgent (extra retrieval)
+#         ├── RE_RANK           → RLDecisionAgent.re_rank_chunks()
+#         ├── ASK_CLARIFICATION → falls back to ANSWER_NOW (async-safe)
+#         └── ANSWER_NOW        → AnswerAgent (final synthesis)
+#                                     │
+#                                     ▼
+#                               record_experience()  ← reward + Q-update
+
+# The RL agent runs an inner decision loop (max MAX_STEPS steps).
+# After the loop, AnswerAgent always synthesises the final response.
+# """
+
+# import asyncio
+# import logging
+# import time
+# import uuid
+# from typing import Any, Dict, List, Optional
+
+# from apps.rag.services.agents.base_agent   import AgentState
+# from apps.rag.services.agents.planner_agent import PlannerAgent
+# from apps.rag.services.agents.rag_agent    import RAGAgent
+# from apps.rag.services.agents.answer_agent import AnswerAgent
+# from apps.rag.services.agents.search_agent import SearchAgent
+# from apps.rag.services.agents.rl_agent     import RLDecisionAgent
+
+# logger = logging.getLogger(__name__)
+
+
+# class MultiAgentCoordinator:
+#     """
+#     Central coordinator for the RL-enhanced multi-agent RAG system.
+
+#     Injected services (all singletons created in views.py):
+#         llm_service       – AsyncGroq wrapper
+#         vector_store      – ChromaDB wrapper
+#         embedding_service – SentenceTransformer wrapper
+#         tavily_client     – optional; enables web search
+#     """
+
+#     MAX_RL_STEPS = 5   # hard ceiling for the RL decision loop
+
+#     def __init__(
+#         self,
+#         llm_service,
+#         vector_store,
+#         embedding_service,
+#         tavily_client = None,
+#     ) -> None:
+#         self.llm_service       = llm_service
+#         self.vector_store      = vector_store
+#         self.embedding_service = embedding_service
+
+#         # Agents
+#         self.planner      = PlannerAgent(llm_service=llm_service)
+#         self.rl_agent     = RLDecisionAgent(llm_service=llm_service)
+#         self.rag_agent    = RAGAgent(
+#             llm_service       = llm_service,
+#             vector_store      = vector_store,
+#             embedding_service = embedding_service,
+#         )
+#         self.search_agent = SearchAgent(
+#             llm_service   = llm_service,
+#             tavily_client = tavily_client,
+#         )
+#         self.answer_agent = AnswerAgent(llm_service=llm_service)
+
+#         logger.info("[Coordinator] RL-Enhanced Multi-Agent Coordinator initialised")
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  PUBLIC ENTRY POINT
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     async def execute(
+#         self,
+#         query:    str,
+#         context:  Dict[str, Any],
+#     ) -> Dict[str, Any]:
+#         """
+#         Full pipeline execution.
+
+#         Args:
+#             query:   User's question
+#             context: Dict from views.py — may contain document_id,
+#                      document_filter, top_k, session_id, strategy
+
+#         Returns:
+#             Result dict with: answer, strategy_used, retrieved_chunks,
+#             confidence, execution_steps, internet_sources, rl_metadata
+#         """
+#         start        = time.time()
+#         query_id_str = str(uuid.uuid4())
+
+#         # Master agent state (shared across all agents in this request)
+#         state = AgentState(
+#             agent_name = "coordinator",
+#             query      = query,
+#             context    = context.copy(),
+#         )
+#         state.metadata["query_id"] = query_id_str
+
+#         try:
+#             # ── 1. PLANNER ────────────────────────────────────────────────
+#             plan_result = await self.planner.execute(state)
+#             self._extract_plan_metadata(plan_result, state)
+
+#             # ── 2. INITIAL RAG RETRIEVAL (always run once first) ──────────
+#             await self._run_rag(state)
+
+#             # ── 3. RL DECISION LOOP ───────────────────────────────────────
+#             for step in range(self.MAX_RL_STEPS):
+#                 rl_result   = await self.rl_agent.execute(state)
+#                 action_name = rl_result.output.strip()
+
+#                 logger.info(f"[Coordinator] RL step {step + 1}/{self.MAX_RL_STEPS} → {action_name}")
+
+#                 if action_name == "ANSWER_NOW" or step == self.MAX_RL_STEPS - 1:
+#                     # Terminal action — compute reward after answer
+#                     break
+
+#                 elif action_name == "RETRIEVE_MORE":
+#                     await self._run_rag(state, extra=True)
+#                     self._record_non_terminal(state, query_id_str)
+
+#                 elif action_name == "RE_RANK":
+#                     await self._do_rerank(query, state)
+#                     self._record_non_terminal(state, query_id_str)
+
+#                 elif action_name == "ASK_CLARIFICATION":
+#                     # Cannot block for user input in async flow — fall through
+#                     logger.info("[Coordinator] ASK_CLARIFICATION → falling back to ANSWER_NOW")
+#                     break
+
+#             # ── 4. SEARCH (if plan requested it and no internet yet) ──────
+#             plan_needs_internet = state.metadata.get("requires_internet", False)
+#             if plan_needs_internet and "search_results" not in state.metadata:
+#                 await self._run_search(state)
+
+#             # ── 5. ANSWER GENERATION ──────────────────────────────────────
+#             answer_result = await self.answer_agent.execute(state)
+
+#             # ── 6. TERMINAL REWARD ────────────────────────────────────────
+#             final_confidence = answer_result.confidence
+#             has_citations    = "**Sources" in (answer_result.output or "")
+
+#             next_state_data = {
+#                 "confidence":      final_confidence,
+#                 "retrieved_count": len(state.metadata.get("retrieved_chunks", [])),
+#                 "complexity":      state.metadata.get("query_complexity", "medium"),
+#                 "has_internet":    "search_results" in state.metadata,
+#                 "has_citations":   has_citations,
+#             }
+#             self.rl_agent.record_experience(
+#                 state           = state,
+#                 next_state_data = next_state_data,
+#                 done            = True,
+#                 query_id        = query_id_str,
+#             )
+
+#             # ── 7. BUILD RESPONSE ─────────────────────────────────────────
+#             return self._build_response(
+#                 query        = query,
+#                 answer       = answer_result.output or "",
+#                 state        = state,
+#                 confidence   = final_confidence,
+#                 start        = start,
+#                 query_id_str = query_id_str,
+#             )
+
+#         except Exception as exc:
+#             logger.error(f"[Coordinator] execute failed: {exc}", exc_info=True)
+#             raise
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  AGENT RUNNERS
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     async def _run_rag(self, state: AgentState, extra: bool = False) -> None:
+#         """
+#         Run RAGAgent and merge results into state.
+
+#         On extra=True (RETRIEVE_MORE action), bump top_k by 3.
+#         """
+#         if extra:
+#             state.context["top_k"] = state.context.get("top_k", 5) + 3
+#             logger.info(f"[Coordinator] RETRIEVE_MORE → top_k={state.context['top_k']}")
+
+#         result = await self.rag_agent.execute(state)
+
+#         if result.success and "retrieved_chunks" in result.metadata:
+#             existing = state.metadata.get("retrieved_chunks", [])
+#             new      = result.metadata.get("retrieved_chunks", [])
+#             # Deduplicate by content
+#             seen    = {c.get("content", "") for c in existing}
+#             merged  = existing + [c for c in new if c.get("content", "") not in seen]
+#             state.metadata["retrieved_chunks"] = merged
+
+#         # Carry relevance check forward
+#         if "relevance_check" in result.metadata:
+#             state.metadata["relevance_check"] = result.metadata["relevance_check"]
+
+#     async def _do_rerank(self, query: str, state: AgentState) -> None:
+#         """Re-rank existing chunks using the RL agent's LLM scorer."""
+#         chunks = state.metadata.get("retrieved_chunks", [])
+#         if not chunks:
+#             return
+#         re_ranked = await self.rl_agent.re_rank_chunks(query, chunks, state)
+#         state.metadata["retrieved_chunks"] = re_ranked
+
+#         # Update pseudo-confidence based on top chunk score
+#         if re_ranked:
+#             top_score = re_ranked[0].get("rl_rerank_score", 5) / 10.0
+#             state.metadata.setdefault("relevance_check", {})["score"] = top_score
+
+#     async def _run_search(self, state: AgentState) -> None:
+#         """Run SearchAgent and store results in state."""
+#         result = await self.search_agent.execute(state)
+#         if result.success:
+#             state.metadata.update(result.metadata)
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  REWARD HELPERS
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     def _record_non_terminal(
+#         self,
+#         state:        AgentState,
+#         query_id_str: str,
+#     ) -> None:
+#         """Record a non-terminal reward after a RETRIEVE_MORE / RE_RANK action."""
+#         next_data = {
+#             "confidence":      state.metadata.get("relevance_check", {}).get("score", 0.5),
+#             "retrieved_count": len(state.metadata.get("retrieved_chunks", [])),
+#             "complexity":      state.metadata.get("query_complexity", "medium"),
+#             "has_internet":    "search_results" in state.metadata,
+#             "has_citations":   False,
+#         }
+#         self.rl_agent.record_experience(
+#             state           = state,
+#             next_state_data = next_data,
+#             done            = False,
+#             query_id        = query_id_str,
+#         )
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  PLAN EXTRACTION
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     def _extract_plan_metadata(
+#         self,
+#         plan_result,
+#         state: AgentState,
+#     ) -> None:
+#         """Pull planner output into state.metadata."""
+#         import json
+#         try:
+#             plan_data = json.loads(plan_result.output or "{}")
+#             state.metadata["query_complexity"]  = plan_data.get("complexity", "medium")
+#             state.metadata["query_type"]        = plan_data.get("query_type", "factual_question")
+#             state.metadata["requires_internet"] = (
+#                 plan_data.get("execution_plan", {}).get("requires_internet", False)
+#             )
+#             logger.info(
+#                 f"[Coordinator] Plan: type={state.metadata['query_type']} | "
+#                 f"complexity={state.metadata['query_complexity']} | "
+#                 f"internet={state.metadata['requires_internet']}"
+#             )
+#         except Exception:
+#             state.metadata.setdefault("query_complexity",  "medium")
+#             state.metadata.setdefault("query_type",        "factual_question")
+#             state.metadata.setdefault("requires_internet", False)
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  RESPONSE BUILDER
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     def _build_response(
+#         self,
+#         query:        str,
+#         answer:       str,
+#         state:        AgentState,
+#         confidence:   float,
+#         start:        float,
+#         query_id_str: str,
+#     ) -> Dict[str, Any]:
+#         """Build the final dict that views.py returns to the client."""
+#         chunks          = state.metadata.get("retrieved_chunks", [])
+#         internet_data   = state.metadata.get("search_results", {})
+#         internet_sources = (
+#             internet_data.get("sources", []) if isinstance(internet_data, dict) else []
+#         )
+
+#         # Collect all execution steps from state
+#         execution_steps: List[Dict] = [
+#             {
+#                 "step_number": s.step_number,
+#                 "type":        s.step_type,
+#                 "content":     s.content,
+#                 "timestamp":   s.timestamp,
+#                 "metadata":    s.metadata,
+#             }
+#             for s in state.execution_steps
+#         ]
+
+#         # RL metadata (surfaced to the client for transparency)
+#         rl_metadata = {
+#             "query_id":         query_id_str,
+#             "steps_taken":      state.metadata.get("rl_step_count",    0),
+#             "last_action":      state.metadata.get("rl_action_name",   "ANSWER_NOW"),
+#             "last_reward":      state.metadata.get("rl_reward",        0.0),
+#             "epsilon":          round(self.rl_agent.memory.q_table.epsilon, 4),
+#             "states_learned":   len(self.rl_agent.memory.q_table.table),
+#         }
+
+#         return {
+#             "answer":           answer,
+#             "confidence":       confidence,
+#             "retrieved_chunks": [
+#                 {
+#                     "content":  c.get("content", ""),
+#                     "score":    c.get("score", 0.0),
+#                     "metadata": c.get("metadata", {}),
+#                 }
+#                 for c in chunks
+#             ],
+#             "execution_steps":  execution_steps,
+#             "internet_sources": internet_sources,
+#             "source":           "rl_multi_agent",
+#             "agent_type":       "rl_coordinator",
+#             "agents_used":      ["PlannerAgent", "RLDecisionAgent", "RAGAgent", "AnswerAgent"],
+#             "query_type":       state.metadata.get("query_type", "factual_question"),
+#             "rl_metadata":      rl_metadata,
+#         }
+
+#     # ─────────────────────────────────────────────────────────────────────────
+#     #  AGENT STATUS
+#     # ─────────────────────────────────────────────────────────────────────────
+
+#     def get_agent_status(self) -> Dict[str, Any]:
+#         """Called by views.agent_status — includes RL stats."""
+#         agents = [
+#             self.planner, self.rl_agent,
+#             self.rag_agent, self.search_agent, self.answer_agent,
+#         ]
+#         return {
+#             "agents":    [a.get_capabilities() for a in agents],
+#             "rl_stats":  self.rl_agent.get_rl_stats(),
+#             "rl_enabled": True,
+#         }
+
+
+
+
 """
 Multi-Agent Coordinator — RL-Enhanced
 --------------------------------------
@@ -656,20 +1021,35 @@ class MultiAgentCoordinator:
         Run RAGAgent and merge results into state.
 
         On extra=True (RETRIEVE_MORE action), bump top_k by 3.
+        IMPORTANT: Store chunks even when result.success=False so AnswerAgent
+        never falls back to general knowledge when documents are available.
         """
         if extra:
             state.context["top_k"] = state.context.get("top_k", 5) + 3
-            logger.info(f"[Coordinator] RETRIEVE_MORE → top_k={state.context['top_k']}")
+            logger.info(f"[Coordinator] RETRIEVE_MORE -> top_k={state.context['top_k']}")
 
         result = await self.rag_agent.execute(state)
 
-        if result.success and "retrieved_chunks" in result.metadata:
+        # Always merge chunks — success=False just means low confidence,
+        # not that the chunks are useless. AnswerAgent handles low-quality context better
+        # than the general-knowledge fallback.
+        new_chunks = result.metadata.get("retrieved_chunks", [])
+
+        # Also check state.metadata directly — RAGAgent writes there too
+        if not new_chunks:
+            new_chunks = state.metadata.get("retrieved_chunks", [])
+
+        if new_chunks:
             existing = state.metadata.get("retrieved_chunks", [])
-            new      = result.metadata.get("retrieved_chunks", [])
-            # Deduplicate by content
-            seen    = {c.get("content", "") for c in existing}
-            merged  = existing + [c for c in new if c.get("content", "") not in seen]
+            seen     = {c.get("content", "") for c in existing}
+            merged   = existing + [c for c in new_chunks if c.get("content", "") not in seen]
             state.metadata["retrieved_chunks"] = merged
+            logger.info(
+                f"[Coordinator] RAG stored {len(merged)} chunks total "
+                f"(success={result.success})"
+            )
+        else:
+            logger.warning("[Coordinator] RAG returned 0 chunks")
 
         # Carry relevance check forward
         if "relevance_check" in result.metadata:
