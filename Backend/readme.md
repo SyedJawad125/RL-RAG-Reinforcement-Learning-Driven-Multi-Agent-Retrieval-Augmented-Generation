@@ -110,3 +110,21 @@ Improve agent decisions over time
 RL
 Human feedback (RLHF concept)
 Real-world system
+
+--------------------------------------------
+
+Final Classification (Very Important)
+
+If you want a perfect academic description, say this:
+
+“We use a tabular Q-learning based decision agent with epsilon-greedy exploration, experience replay, and reward shaping, augmented with human feedback signals for adaptive decision-making in a multi-step RAG pipeline.”
+
+Short Answer (Interview Style)
+
+If someone asks:
+
+👉 Which RL technique are you using?
+
+Answer:
+
+“Tabular Q-learning with epsilon-greedy exploration, enhanced with experience replay and reward shaping.”
