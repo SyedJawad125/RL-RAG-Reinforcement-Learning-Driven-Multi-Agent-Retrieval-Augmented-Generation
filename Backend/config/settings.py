@@ -11,9 +11,17 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import warnings
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import timedelta
+
+# Suppress TensorFlow deprecation warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+warnings.filterwarnings('ignore', module='tf_keras')
+warnings.filterwarnings('ignore', category=UserWarning, module='torchvision')
+
 
 
 load_dotenv()
